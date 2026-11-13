@@ -31,7 +31,7 @@ Java_com_bibgg_aibbgi_NativeBridge_loadModel(JNIEnv *env, jobject, jstring path)
 
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = 2048;
-    cp.n_batch = 512;
+    cp.n_batch = 2048;
     cp.n_threads = 4;
     cp.n_threads_batch = 4;
     g_ctx = llama_init_from_model(g_model, cp);
