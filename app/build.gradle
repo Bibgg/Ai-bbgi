@@ -5,7 +5,7 @@ plugins {
 android {
     buildFeatures { viewBinding true }
     namespace 'com.bibgg.aibbgi'
-    compileSdk 34
+    compileSdk 35
     defaultConfig {
         applicationId 'com.bibgg.aibbgi'
         minSdk 26
