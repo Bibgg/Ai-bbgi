@@ -32,6 +32,7 @@ class MainActivity : AppCompatActivity() {
         .readTimeout(90, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).build()
     private val jsonType = "application/json; charset=utf-8".toMediaType()
     private var sessionId: String? = null
+    private val localHistory = mutableListOf<Pair<String, String>>()
     private var busy = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -140,9 +141,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun callLocal(baseUrl: String, prompt: String): String {
         val endpoint = if (baseUrl.endsWith("/v1/chat/completions")) baseUrl else baseUrl.trimEnd('/') + "/v1/chat/completions"
+        val history = JSONArray()
+        localHistory.forEach { (role, content) ->
+            history.put(JSONObject().put("role", role).put("content", content))
+        }
+        history.put(JSONObject().put("role", "user").put("content", prompt))
         val payload = JSONObject().put("model", "local-model")
-            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt)))
-            .put("temperature", 0.7).put("stream", false)
+            .put("messages", history).put("temperature", 0.7).put("stream", false)
         val request = Request.Builder().url(endpoint).post(payload.toString().toRequestBody(jsonType)).build()
         http.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
@@ -150,6 +155,8 @@ class MainActivity : AppCompatActivity() {
             val answer = JSONObject(body).optJSONArray("choices")?.optJSONObject(0)
                 ?.optJSONObject("message")?.optString("content").orEmpty()
             if (answer.isBlank()) throw IllegalStateException("Local model returned an empty response")
+            localHistory.add("user" to prompt)
+            localHistory.add("assistant" to answer)
             return answer
         }
     }
