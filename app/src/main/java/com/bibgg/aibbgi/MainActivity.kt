@@ -145,14 +145,19 @@ class MainActivity : AppCompatActivity() {
             try {
                 val data = getJson("$backend/api/sessions/$id/messages", key)
                 val rows = data.optJSONArray("messages") ?: JSONArray()
+                val restored = mutableListOf<Pair<String, String>>()
+                for (index in 0 until rows.length()) {
+                    val row = rows.optJSONObject(index) ?: continue
+                    val role = row.optString("role")
+                    val content = row.optString("content")
+                    if ((role == "assistant" || role == "user") && content.isNotBlank()) restored.add(role to content)
+                }
                 runOnUiThread {
+                    localHistory.clear()
+                    localHistory.addAll(restored)
                     binding.messageList.removeAllViews()
-                    for (index in 0 until rows.length()) {
-                        val row = rows.optJSONObject(index) ?: continue
-                        val role = row.optString("role")
-                        val content = row.optString("content")
-                        if (role == "assistant") showAssistant(content)
-                        else if (role == "user") showText("user", content)
+                    restored.forEach { (role, content) ->
+                        if (role == "assistant") showAssistant(content) else showText("user", content)
                     }
                 }
             } catch (_: Exception) {
