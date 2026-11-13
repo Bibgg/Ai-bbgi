@@ -38,7 +38,7 @@ jobs:
 
       - name: Install Android SDK platform and build tools
         run: |
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;29.0.13113456" "cmake;3.31.6"
           yes | sdkmanager --licenses
 
       - name: Set up Gradle 8.9
