@@ -13,6 +13,11 @@
         android:paddingTop="7dp" android:paddingEnd="16dp" android:paddingBottom="7dp"
         android:text="Ready · Configure backend in Settings"
         android:textColor="#B9A6FF" android:textSize="12sp" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/researchToggle" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:layout_marginStart="12dp"
+        android:layout_marginBottom="4dp" android:text="Research OFF"
+        app:cornerRadius="18dp" />
     <ScrollView
         android:id="@+id/chatScroll" android:layout_width="match_parent"
         android:layout_height="0dp" android:layout_weight="1"
