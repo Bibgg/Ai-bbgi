@@ -1,0 +1,22 @@
+{
+  "name": "ai-bbgi-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ai-BBGI hybrid llama.cpp and cloud AI backend",
+  "main": "server.js",
+  "engines": { "node": ">=20.0.0" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check": "node --check server.js"
+  },
+  "dependencies": {
+    "@octokit/rest": "^21.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "mongoose": "^8.9.5"
+  }
+}
