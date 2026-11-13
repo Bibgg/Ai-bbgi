@@ -1,2 +1,3 @@
-# Keep JNI bridge methods and native declarations.
--keepclasseswithmembernames class * { native <methods>; }
+-keep class androidx.security.crypto.** { *; }
+-keep class okhttp3.** { *; }
+-dontwarn okhttp3.**
