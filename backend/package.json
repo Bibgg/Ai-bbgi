@@ -4,7 +4,7 @@
   "private": true,
   "description": "Ai-BBGI hybrid llama.cpp and cloud AI backend",
   "main": "server.js",
-  "engines": { "node": ">=20.0.0" },
+  "engines": { "node": "22.x" },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
