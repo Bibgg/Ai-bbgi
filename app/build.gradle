@@ -3,6 +3,7 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 android {
+    buildFeatures { viewBinding true }
     namespace 'com.bibgg.aibbgi'
     compileSdk 34
     defaultConfig {
