@@ -42,7 +42,9 @@ class MainActivity : AppCompatActivity() {
         markdown = Markwon.create(this)
         setSupportActionBar(binding.toolbar)
         binding.sendButton.setOnClickListener { sendMessage() }
+        sessionId = SecurePrefs.get(this).getString(SettingsActivity.KEY_SESSION_ID, null)
         showText("assistant", "नमस्ते! Settings में Render Backend URL और API Key सेट करें। Local Mode के लिए llama.cpp server URL भी दें।")
+        restoreSessionHistory()
     }
 
     override fun onCreateOptionsMenu(menu: android.view.Menu): Boolean {
@@ -89,7 +91,10 @@ class MainActivity : AppCompatActivity() {
                 val localUrl = prefs.getString(SettingsActivity.KEY_LLAMA_URL, "").orEmpty()
                 val result = if (localMode && localUrl.isNotBlank()) {
                     try {
-                        val answer = callLocal(localUrl, prompt)
+                        val memory = if (backend.isNotBlank() && key.isNotBlank()) {
+                            try { getJson("$backend/api/memory", key).optString("memory") } catch (_: Exception) { "" }
+                        } else ""
+                        val answer = callLocal(localUrl, prompt, memory)
                         persistLocalIfPossible(backend, key, prompt, answer)
                         AiReply(answer, "local")
                     } catch (localError: Exception) {
@@ -119,6 +124,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun getJson(url: String, key: String): JSONObject {
+        val request = Request.Builder().url(url).header("Authorization", "Bearer $key")
+            .header("X-Client-Id", clientId()).get().build()
+        http.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            val data = if (body.isNotBlank()) JSONObject(body) else JSONObject()
+            if (!response.isSuccessful) throw IllegalStateException(data.optString("error", "HTTP ${response.code}"))
+            return data
+        }
+    }
+
+    private fun restoreSessionHistory() {
+        val id = sessionId ?: return
+        val prefs = SecurePrefs.get(this)
+        val backend = prefs.getString(SettingsActivity.KEY_BACKEND_URL, "").orEmpty()
+        val key = prefs.getString(SettingsActivity.KEY_API_KEY, "").orEmpty()
+        if (backend.isBlank() || key.isBlank()) return
+        Thread {
+            try {
+                val data = getJson("$backend/api/sessions/$id/messages", key)
+                val rows = data.optJSONArray("messages") ?: JSONArray()
+                runOnUiThread {
+                    binding.messageList.removeAllViews()
+                    for (index in 0 until rows.length()) {
+                        val row = rows.optJSONObject(index) ?: continue
+                        val role = row.optString("role")
+                        val content = row.optString("content")
+                        if (role == "assistant") showAssistant(content)
+                        else if (role == "user") showText("user", content)
+                    }
+                }
+            } catch (_: Exception) {
+                // Keep the welcome message when the previous session cannot be restored.
+            }
+        }.start()
+    }
+
     private fun request(url: String, key: String, payload: JSONObject): JSONObject {
         val request = Request.Builder().url(url).header("Authorization", "Bearer $key")
             .header("X-Client-Id", clientId())
@@ -136,12 +178,16 @@ class MainActivity : AppCompatActivity() {
         sessionId?.let { payload.put("sessionId", it) }
         val data = request("$backend/api/chat", key, payload)
         sessionId = data.optString("sessionId").takeIf { it.isNotBlank() }
+        sessionId?.let { SecurePrefs.get(this).edit().putString(SettingsActivity.KEY_SESSION_ID, it).apply() }
         return AiReply(data.getString("reply"), data.optString("provider", "cloud"))
     }
 
-    private fun callLocal(baseUrl: String, prompt: String): String {
+    private fun callLocal(baseUrl: String, prompt: String, memory: String): String {
         val endpoint = if (baseUrl.endsWith("/v1/chat/completions")) baseUrl else baseUrl.trimEnd('/') + "/v1/chat/completions"
         val history = JSONArray()
+        if (memory.isNotBlank()) {
+            history.put(JSONObject().put("role", "system").put("content", "Long-term user context:\n$memory"))
+        }
         localHistory.forEach { (role, content) ->
             history.put(JSONObject().put("role", role).put("content", content))
         }
@@ -167,6 +213,7 @@ class MainActivity : AppCompatActivity() {
             var id = sessionId
             if (id == null) id = request("$backend/api/sessions", key, JSONObject().put("title", prompt.take(80))).getString("sessionId")
             sessionId = id
+            SecurePrefs.get(this).edit().putString(SettingsActivity.KEY_SESSION_ID, id).apply()
             request("$backend/api/sessions/$id/messages", key,
                 JSONObject().put("role", "user").put("content", prompt).put("provider", "client-local"))
             request("$backend/api/sessions/$id/messages", key,
