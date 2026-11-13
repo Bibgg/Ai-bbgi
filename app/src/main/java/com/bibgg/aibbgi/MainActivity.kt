@@ -34,6 +34,7 @@ class MainActivity : AppCompatActivity() {
     private var sessionId: String? = null
     private val localHistory = mutableListOf<Pair<String, String>>()
     private var busy = false
+    private var researchMode = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,6 +43,11 @@ class MainActivity : AppCompatActivity() {
         markdown = Markwon.create(this)
         setSupportActionBar(binding.toolbar)
         binding.sendButton.setOnClickListener { sendMessage() }
+        binding.researchToggle.setOnClickListener {
+            researchMode = !researchMode
+            binding.researchToggle.text = if (researchMode) "Research ON" else "Research OFF"
+            binding.providerStatus.text = if (researchMode) "Live web search + sourced answers" else "Chat mode"
+        }
         sessionId = SecurePrefs.get(this).getString(SettingsActivity.KEY_SESSION_ID, null)
         showText("assistant", "नमस्ते! Settings में Render Backend URL और API Key सेट करें। Local Mode के लिए llama.cpp server URL भी दें।")
         restoreSessionHistory()
@@ -74,7 +80,7 @@ class MainActivity : AppCompatActivity() {
         val prefs = SecurePrefs.get(this)
         val backend = prefs.getString(SettingsActivity.KEY_BACKEND_URL, "").orEmpty()
         val key = prefs.getString(SettingsActivity.KEY_API_KEY, "").orEmpty()
-        val localModeSelected = prefs.getBoolean(SettingsActivity.KEY_LOCAL_MODE, false)
+        val localModeSelected = prefs.getBoolean(SettingsActivity.KEY_LOCAL_MODE, false) && !researchMode
         val localServerSelected = prefs.getString(SettingsActivity.KEY_LLAMA_URL, "").orEmpty().isNotBlank()
         if ((!localModeSelected || !localServerSelected) && (backend.isBlank() || key.isBlank())) {
             Toast.makeText(this, "Cloud chat के लिए Settings में Backend URL और API Key सेट करें।", Toast.LENGTH_LONG).show()
@@ -87,7 +93,7 @@ class MainActivity : AppCompatActivity() {
         binding.providerStatus.text = "Thinking…"
         Thread {
             try {
-                val localMode = prefs.getBoolean(SettingsActivity.KEY_LOCAL_MODE, false)
+                val localMode = prefs.getBoolean(SettingsActivity.KEY_LOCAL_MODE, false) && !researchMode
                 val localUrl = prefs.getString(SettingsActivity.KEY_LLAMA_URL, "").orEmpty()
                 val result = if (localMode && localUrl.isNotBlank()) {
                     try {
@@ -99,12 +105,13 @@ class MainActivity : AppCompatActivity() {
                         AiReply(answer, "local")
                     } catch (localError: Exception) {
                         if (backend.isBlank() || key.isBlank()) throw localError
-                        callBackend(backend, key, prompt, "auto")
+                        callBackend(backend, key, prompt, if (researchMode) "research" else "auto")
                     }
-                } else callBackend(backend, key, prompt, "cloud")
+                } else callBackend(backend, key, prompt, if (researchMode) "research" else "cloud")
                 runOnUiThread {
                     binding.providerStatus.text = "Connected · ${result.provider}"
                     showAssistant(result.text)
+                    if (result.sources.length() > 0) showSources(result.sources)
                 }
             } catch (error: Exception) {
                 runOnUiThread {
@@ -184,7 +191,7 @@ class MainActivity : AppCompatActivity() {
         val data = request("$backend/api/chat", key, payload)
         sessionId = data.optString("sessionId").takeIf { it.isNotBlank() }
         sessionId?.let { SecurePrefs.get(this).edit().putString(SettingsActivity.KEY_SESSION_ID, it).apply() }
-        return AiReply(data.getString("reply"), data.optString("provider", "cloud"))
+        return AiReply(data.getString("reply"), data.optString("provider", "cloud"), data.optJSONArray("sources") ?: JSONArray())
     }
 
     private fun callLocal(baseUrl: String, prompt: String, memory: String): String {
@@ -355,5 +362,34 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun scrollToBottom() { binding.chatScroll.post { binding.chatScroll.fullScroll(View.FOCUS_DOWN) } }
-    private data class AiReply(val text: String, val provider: String)
+    private fun showSources(sources: JSONArray) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(14, 12, 14, 12)
+            setBackgroundColor(Color.rgb(24, 39, 48))
+        }
+        card.addView(TextView(this).apply {
+            text = "WEB SOURCES"; textSize = 11f; setTextColor(Color.rgb(156, 203, 189))
+        })
+        for (index in 0 until sources.length()) {
+            val source = sources.optJSONObject(index) ?: continue
+            val title = source.optString("title", "Source ${index + 1}")
+            val url = source.optString("url")
+            card.addView(TextView(this).apply {
+                text = "${index + 1}. $title\n$url"
+                textSize = 12f; setTextColor(Color.rgb(190, 210, 255))
+                setPadding(0, 7, 0, 7); setTextIsSelectable(true)
+                setOnClickListener {
+                    if (url.startsWith("https://")) {
+                        try { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+                        catch (_: Exception) { Toast.makeText(this@MainActivity, "Link open नहीं हुआ", Toast.LENGTH_SHORT).show() }
+                    }
+                }
+            })
+        }
+        binding.messageList.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 10 })
+        scrollToBottom()
+    }
+
+    private data class AiReply(val text: String, val provider: String, val sources: JSONArray = JSONArray())
 }
