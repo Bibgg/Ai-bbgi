@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#111318" android:fillViewport="true">
+<LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="20dp">
+<com.google.android.material.appbar.MaterialToolbar android:id="@+id/settingsToolbar" android:layout_width="match_parent" android:layout_height="?attr/actionBarSize" android:title="Connection Settings" android:titleTextColor="#FFFFFF"/>
+<TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="18dp" android:text="Render Backend URL" android:textColor="#B9A6FF" android:textStyle="bold"/>
+<com.google.android.material.textfield.TextInputEditText android:id="@+id/backendUrlInput" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="https://your-service.onrender.com" android:inputType="textUri" android:textColor="#FFFFFF"/>
+<TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="Backend API Key" android:textColor="#B9A6FF" android:textStyle="bold"/>
+<com.google.android.material.textfield.TextInputEditText android:id="@+id/apiKeyInput" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="APP_API_KEY from Render" android:inputType="textPassword" android:textColor="#FFFFFF"/>
+<com.google.android.material.checkbox.MaterialCheckBox android:id="@+id/localModeCheck" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="Prefer Local llama.cpp server" android:textColor="#FFFFFF"/>
+<TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="Local llama.cpp Server URL" android:textColor="#B9A6FF" android:textStyle="bold"/>
+<com.google.android.material.textfield.TextInputEditText android:id="@+id/llamaUrlInput" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="http://192.168.1.10:8080" android:inputType="textUri" android:textColor="#FFFFFF"/>
+<TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="Default GitHub Repository" android:textColor="#B9A6FF" android:textStyle="bold"/>
+<com.google.android.material.textfield.TextInputEditText android:id="@+id/repoInput" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Bibgg/Ai-bbgi" android:textColor="#FFFFFF"/>
+<TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="GitHub Personal Access Token" android:textColor="#B9A6FF" android:textStyle="bold"/>
+<com.google.android.material.textfield.TextInputEditText android:id="@+id/githubTokenInput" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Fine-grained PAT · Contents read/write" android:inputType="textPassword" android:textColor="#FFFFFF"/>
+<com.google.android.material.button.MaterialButton android:id="@+id/saveSettingsButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="26dp" android:text="Save Settings"/>
+<TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="Use HTTPS for remote endpoints. Local HTTP is supported for trusted LAN llama.cpp servers. Never share your GitHub token." android:textColor="#9297A3" android:textSize="12sp"/>
+</LinearLayout>
+</ScrollView>
