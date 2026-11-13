@@ -71,8 +71,10 @@ class MainActivity : AppCompatActivity() {
         val prefs = SecurePrefs.get(this)
         val backend = prefs.getString(SettingsActivity.KEY_BACKEND_URL, "").orEmpty()
         val key = prefs.getString(SettingsActivity.KEY_API_KEY, "").orEmpty()
-        if (backend.isBlank() || key.isBlank()) {
-            Toast.makeText(this, "पहले Settings में Backend URL और API Key सेट करें।", Toast.LENGTH_LONG).show()
+        val localModeSelected = prefs.getBoolean(SettingsActivity.KEY_LOCAL_MODE, false)
+        val localServerSelected = prefs.getString(SettingsActivity.KEY_LLAMA_URL, "").orEmpty().isNotBlank()
+        if ((!localModeSelected || !localServerSelected) && (backend.isBlank() || key.isBlank())) {
+            Toast.makeText(this, "Cloud chat के लिए Settings में Backend URL और API Key सेट करें।", Toast.LENGTH_LONG).show()
             return
         }
         binding.messageInput.setText("")
@@ -89,7 +91,8 @@ class MainActivity : AppCompatActivity() {
                         val answer = callLocal(localUrl, prompt)
                         persistLocalIfPossible(backend, key, prompt, answer)
                         AiReply(answer, "local")
-                    } catch (_: Exception) {
+                    } catch (localError: Exception) {
+                        if (backend.isBlank() || key.isBlank()) throw localError
                         callBackend(backend, key, prompt, "auto")
                     }
                 } else callBackend(backend, key, prompt, "cloud")
@@ -152,6 +155,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun persistLocalIfPossible(backend: String, key: String, prompt: String, answer: String) {
+        if (backend.isBlank() || key.isBlank()) return
         try {
             var id = sessionId
             if (id == null) id = request("$backend/api/sessions", key, JSONObject().put("title", prompt.take(80))).getString("sessionId")
