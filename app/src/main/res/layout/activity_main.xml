@@ -6,7 +6,7 @@
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar" android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize" android:background="#191C23"
-        app:title="Ai-BBGI" app:titleTextColor="#FFFFFF" app:menu="@menu/main_menu" />
+        app:title="Ai-BBGI" app:titleTextColor="#FFFFFF" />
     <TextView
         android:id="@+id/providerStatus" android:layout_width="match_parent"
         android:layout_height="wrap_content" android:paddingStart="16dp"
