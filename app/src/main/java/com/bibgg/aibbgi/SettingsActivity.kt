@@ -21,7 +21,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.repoInput.setText(prefs.getString(KEY_GITHUB_REPO, "Bibgg/Ai-bbgi"))
         binding.githubTokenInput.setText(prefs.getString(KEY_GITHUB_TOKEN, ""))
 
-        binding.settingsToolbar.setNavigationIcon(androidx.appcompat.R.drawable.abc_ic_ab_back_material)
+        binding.settingsToolbar.setNavigationIcon(android.R.drawable.ic_media_previous)
         binding.settingsToolbar.setNavigationOnClickListener { finish() }
         binding.saveSettingsButton.setOnClickListener {
             val backend = binding.backendUrlInput.text?.toString()?.trim().orEmpty().trimEnd('/')
