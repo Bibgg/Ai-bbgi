@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: ai-bbgi-backend
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: MONGODB_DB_NAME
+        value: KedarAI
+      - key: MONGODB_URI
+        sync: false
+      - key: APP_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: LLAMA_SERVER_URL
+        sync: false
+      - key: CLOUD_API_URL
+        value: https://api.openai.com/v1/chat/completions
+      - key: CLOUD_API_KEY
+        sync: false
+      - key: CLOUD_MODEL
+        value: gpt-4o-mini
