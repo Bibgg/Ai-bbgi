@@ -1,79 +1,63 @@
 plugins {
-    alias(libs.plugins.android.library)
-    alias(libs.plugins.jetbrains.kotlin.android)
+    id("com.android.library")
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
     namespace = "com.arm.aichat"
-    compileSdk = 36
-
+    compileSdk = 35
     ndkVersion = "29.0.13113456"
 
     defaultConfig {
-        minSdk = 33
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        minSdk = 26
         consumerProguardFiles("consumer-rules.pro")
-
         ndk {
-             abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters += listOf("arm64-v8a")
         }
         externalNativeBuild {
             cmake {
-                arguments += "-DCMAKE_BUILD_TYPE=Release"
-                arguments += "-DCMAKE_MESSAGE_LOG_LEVEL=DEBUG"
-                arguments += "-DCMAKE_VERBOSE_MAKEFILE=ON"
-
-                arguments += "-DBUILD_SHARED_LIBS=ON"
-                arguments += "-DLLAMA_BUILD_APP=OFF"
-                arguments += "-DLLAMA_BUILD_COMMON=ON"
-                arguments += "-DLLAMA_OPENSSL=OFF"
-
-                arguments += "-DGGML_NATIVE=OFF"
-                arguments += "-DGGML_BACKEND_DL=ON"
-                arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
-                arguments += "-DGGML_LLAMAFILE=OFF"
+                arguments += listOf(
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    "-DCMAKE_MESSAGE_LOG_LEVEL=DEBUG",
+                    "-DCMAKE_VERBOSE_MAKEFILE=ON",
+                    "-DBUILD_SHARED_LIBS=ON",
+                    "-DLLAMA_BUILD_APP=OFF",
+                    "-DLLAMA_BUILD_COMMON=ON",
+                    "-DLLAMA_OPENSSL=OFF",
+                    "-DGGML_NATIVE=OFF",
+                    "-DGGML_BACKEND_DL=ON",
+                    "-DGGML_CPU_ALL_VARIANTS=ON",
+                    "-DGGML_LLAMAFILE=OFF"
+                )
             }
         }
-        aarMetadata {
-            minCompileSdk = 35
-        }
     }
+
     externalNativeBuild {
         cmake {
-            path("src/main/cpp/CMakeLists.txt")
+            path = file("src/main/cpp/CMakeLists.txt")
             version = "3.31.6"
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlin {
-        jvmToolchain(17)
 
-        compileOptions {
-            targetCompatibility = JavaVersion.VERSION_17
-        }
+    kotlinOptions {
+        jvmTarget = "17"
     }
 
     packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
-    }
-
-    publishing {
-        singleVariant("release") {
-            withJavadocJar()
+        jniLibs {
+            useLegacyPackaging = false
         }
     }
 }
 
 dependencies {
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.datastore.preferences)
-
-    testImplementation(libs.junit)
-    androidTestImplementation(libs.androidx.junit)
+    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }

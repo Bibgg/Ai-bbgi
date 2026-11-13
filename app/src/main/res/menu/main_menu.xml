@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:id="@+id/action_settings" android:title="Settings" android:showAsAction="always" />
+    <item
+        android:id="@+id/action_download_model"
+        android:title="Download / Load AI Model"
+        android:showAsAction="never" />
+    <item
+        android:id="@+id/action_settings"
+        android:title="Settings"
+        android:showAsAction="always" />
 </menu>
