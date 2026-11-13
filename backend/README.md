@@ -15,7 +15,7 @@ Set `MONGODB_URI` and a long random `APP_API_KEY` before using protected endpoin
 
 ## Render
 
-Create a Node web service from this repository with root directory `backend`, build command `npm ci`, start command `npm start`, and health check `/health`. Or use the repository's `backend/render.yaml` Blueprint. Set secrets in Render Environment:
+Create a Node web service from this repository with root directory `backend`, build command `npm install`, start command `npm start`, and health check `/health`. Or use the repository's `backend/render.yaml` Blueprint. Set secrets in Render Environment:
 - `MONGODB_URI`: Atlas SRV URI for database user with readWrite on `KedarAI`
 - `APP_API_KEY`: long random app-to-backend bearer key; configure the same value in Android Settings
 - `CLOUD_API_KEY`: optional OpenAI-compatible provider key for fallback
