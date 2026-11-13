@@ -373,7 +373,7 @@ async function connectMongo() {
   }
   try {
     await mongoose.connect(uri, {
-      dbName: process.env.MONGODB_DB_NAME || 'KedarAI',
+      dbName: process.env.MONGODB_DB_NAME || 'AIBBGI',
       serverSelectionTimeoutMS: 10000,
       maxPoolSize: 10,
       minPoolSize: 0
