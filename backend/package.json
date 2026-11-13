@@ -4,11 +4,13 @@
   "private": true,
   "description": "Ai-BBGI hybrid llama.cpp and cloud AI backend",
   "main": "server.js",
-  "engines": { "node": "22.x" },
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js"
+    "check": "node --check server.js && node --check research.js"
   },
   "dependencies": {
     "@octokit/rest": "^21.1.1",
