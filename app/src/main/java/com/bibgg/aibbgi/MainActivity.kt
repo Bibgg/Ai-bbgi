@@ -1,259 +1,296 @@
 package com.bibgg.aibbgi
 
-import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
-import android.net.Uri
-import android.os.Bundle
-import android.text.SpannableString
-import android.text.style.ForegroundColorSpan
 import android.graphics.Color
+import android.os.Bundle
 import android.view.Gravity
-import android.view.ViewGroup
-import android.widget.*
+import android.view.MenuItem
+import android.view.View
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import com.bibgg.aibbgi.databinding.ActivityMainBinding
+import com.google.android.material.button.MaterialButton
+import io.noties.markwon.Markwon
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.Base64
-import kotlin.concurrent.thread
+import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
-    private val native = NativeBridge()
-    private lateinit var messages: LinearLayout
-    private lateinit var input: EditText
-    private lateinit var prefs: android.content.SharedPreferences
-    private var modelReady = false
-    private var latestCode: String? = null
-    private val pickModel = 41
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var markdown: Markwon
+    private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).build()
+    private val jsonType = "application/json; charset=utf-8".toMediaType()
+    private var sessionId: String? = null
+    private var busy = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val master = MasterKey.Builder(this).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
-        prefs = EncryptedSharedPreferences.create(
-            this, "secure_settings", master,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
-        buildUi()
-        addMessage("Ai-BBGI", "नमस्ते! Settings से अपनी .gguf मॉडल फाइल चुनें और Load Model दबाएँ।")
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        markdown = Markwon.create(this)
+        setSupportActionBar(binding.toolbar)
+        binding.sendButton.setOnClickListener { sendMessage() }
+        showText("assistant", "नमस्ते! Settings में Render Backend URL और API Key सेट करें। Local Mode के लिए llama.cpp server URL भी दें।")
     }
 
-    private fun buildUi() {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(16, 14, 16, 12)
-            setBackgroundColor(Color.rgb(16,17,20))
-        }
-        val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        header.addView(TextView(this).apply {
-            text = "Ai-BBGI"; textSize = 22f; setTextColor(Color.WHITE)
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(Button(this).apply { text = "Settings"; setOnClickListener { settingsDialog() } })
-        root.addView(header)
+    override fun onCreateOptionsMenu(menu: android.view.Menu): Boolean {
+        menuInflater.inflate(R.menu.main_menu, menu)
+        return true
+    }
 
-        val scroll = ScrollView(this)
-        messages = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 12, 0, 12) }
-        scroll.addView(messages)
-        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-
-        input = EditText(this).apply {
-            hint = "अपना सवाल या coding task लिखें…"
-            setTextColor(Color.WHITE); setHintTextColor(Color.GRAY)
-            setBackgroundColor(Color.rgb(35,37,43)); minLines = 2; maxLines = 5
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (item.itemId == R.id.action_settings) {
+            startActivity(Intent(this, SettingsActivity::class.java))
+            return true
         }
-        root.addView(input)
-        val actions = LinearLayout(this).apply { gravity = Gravity.END }
-        actions.addView(Button(this).apply {
-            text = "Send"
-            setOnClickListener {
-                val prompt = input.text.toString().trim()
-                if (prompt.isNotEmpty()) {
-                    input.text.clear()
-                    addMessage("You", prompt)
-                    if (!modelReady) addMessage("Ai-BBGI", "पहले Settings में GGUF मॉडल लोड करें।")
-                    else generate(prompt)
+        return super.onOptionsItemSelected(item)
+    }
+
+    override fun onResume() { super.onResume(); updateStatus() }
+
+    private fun updateStatus() {
+        val local = SecurePrefs.get(this).getBoolean(SettingsActivity.KEY_LOCAL_MODE, false)
+        binding.providerStatus.text = if (local) "Local preferred · Cloud fallback enabled" else "Cloud mode · Render backend"
+    }
+
+    private fun sendMessage() {
+        if (busy) return
+        val prompt = binding.messageInput.text?.toString()?.trim().orEmpty()
+        if (prompt.isBlank()) return
+        val prefs = SecurePrefs.get(this)
+        val backend = prefs.getString(SettingsActivity.KEY_BACKEND_URL, "").orEmpty()
+        val key = prefs.getString(SettingsActivity.KEY_API_KEY, "").orEmpty()
+        if (backend.isBlank() || key.isBlank()) {
+            Toast.makeText(this, "पहले Settings में Backend URL और API Key सेट करें।", Toast.LENGTH_LONG).show()
+            return
+        }
+        binding.messageInput.setText("")
+        showText("user", prompt)
+        busy = true
+        binding.sendButton.isEnabled = false
+        binding.providerStatus.text = "Thinking…"
+        Thread {
+            try {
+                val localMode = prefs.getBoolean(SettingsActivity.KEY_LOCAL_MODE, false)
+                val localUrl = prefs.getString(SettingsActivity.KEY_LLAMA_URL, "").orEmpty()
+                val result = if (localMode && localUrl.isNotBlank()) {
+                    try {
+                        val answer = callLocal(localUrl, prompt)
+                        persistLocalIfPossible(backend, key, prompt, answer)
+                        AiReply(answer, "local")
+                    } catch (_: Exception) {
+                        callBackend(backend, key, prompt, "auto")
+                    }
+                } else callBackend(backend, key, prompt, "cloud")
+                runOnUiThread {
+                    binding.providerStatus.text = "Connected · ${result.provider}"
+                    showAssistant(result.text)
                 }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    binding.providerStatus.text = "Connection error"
+                    showText("assistant", "Error: ${error.message ?: "Unable to connect"}")
+                }
+            } finally {
+                runOnUiThread { busy = false; binding.sendButton.isEnabled = true }
             }
-        })
-        actions.addView(Button(this).apply {
-            text = "Push to GitHub"
-            setOnClickListener { pushLatestCode() }
-        })
-        root.addView(actions)
-        setContentView(root)
+        }.start()
     }
 
-    private fun addMessage(who: String, body: String) {
+    private fun clientId(): String {
+        val prefs = SecurePrefs.get(this)
+        return prefs.getString(SettingsActivity.KEY_CLIENT_ID, null) ?: UUID.randomUUID().toString().also {
+            prefs.edit().putString(SettingsActivity.KEY_CLIENT_ID, it).apply()
+        }
+    }
+
+    private fun request(url: String, key: String, payload: JSONObject): JSONObject {
+        val request = Request.Builder().url(url).header("Authorization", "Bearer $key")
+            .header("X-Client-Id", clientId())
+            .post(payload.toString().toRequestBody(jsonType)).build()
+        http.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            val data = if (body.isNotBlank()) JSONObject(body) else JSONObject()
+            if (!response.isSuccessful) throw IllegalStateException(data.optString("error", "HTTP ${response.code}"))
+            return data
+        }
+    }
+
+    private fun callBackend(backend: String, key: String, prompt: String, mode: String): AiReply {
+        val payload = JSONObject().put("message", prompt).put("mode", mode)
+        sessionId?.let { payload.put("sessionId", it) }
+        val data = request("$backend/api/chat", key, payload)
+        sessionId = data.optString("sessionId").takeIf { it.isNotBlank() }
+        return AiReply(data.getString("reply"), data.optString("provider", "cloud"))
+    }
+
+    private fun callLocal(baseUrl: String, prompt: String): String {
+        val endpoint = if (baseUrl.endsWith("/v1/chat/completions")) baseUrl else baseUrl.trimEnd('/') + "/v1/chat/completions"
+        val payload = JSONObject().put("model", "local-model")
+            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt)))
+            .put("temperature", 0.7).put("stream", false)
+        val request = Request.Builder().url(endpoint).post(payload.toString().toRequestBody(jsonType)).build()
+        http.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw IllegalStateException("Local llama.cpp HTTP ${response.code}")
+            val answer = JSONObject(body).optJSONArray("choices")?.optJSONObject(0)
+                ?.optJSONObject("message")?.optString("content").orEmpty()
+            if (answer.isBlank()) throw IllegalStateException("Local model returned an empty response")
+            return answer
+        }
+    }
+
+    private fun persistLocalIfPossible(backend: String, key: String, prompt: String, answer: String) {
+        try {
+            var id = sessionId
+            if (id == null) id = request("$backend/api/sessions", key, JSONObject().put("title", prompt.take(80))).getString("sessionId")
+            sessionId = id
+            request("$backend/api/sessions/$id/messages", key,
+                JSONObject().put("role", "user").put("content", prompt).put("provider", "client-local"))
+            request("$backend/api/sessions/$id/messages", key,
+                JSONObject().put("role", "assistant").put("content", answer).put("provider", "client-local"))
+        } catch (_: Exception) { /* Keep local chat available during cloud outages. */ }
+    }
+
+    private fun showText(role: String, text: String) {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(12, 10, 12, 10)
-            setBackgroundColor(Color.rgb(35,37,43))
+            setPadding(14, 14, 14, 14)
+            setBackgroundColor(if (role == "user") Color.rgb(42, 48, 62) else Color.rgb(29, 33, 42))
         }
         card.addView(TextView(this).apply {
-            text = who; textSize = 12f; setTextColor(Color.rgb(180,160,255))
+            this.text = if (role == "user") "YOU" else "AI-BBGI"
+            textSize = 11f; setTextColor(Color.rgb(185, 166, 255))
         })
-        val code = Regex("```(?:[a-zA-Z0-9_+.-]+)?\\s*([\\s\\S]*?)```")
-        val match = code.find(body)
-        if (match != null) {
-            val before = body.substringBefore(match.value).trim()
-            if (before.isNotEmpty()) card.addView(messageText(before))
-            val source = match.groupValues[1].trim()
-            latestCode = source
-            val codeView = TextView(this).apply {
-                text = highlight(source); textSize = 13f
-                setTextColor(Color.WHITE); setBackgroundColor(Color.rgb(20,21,25))
-                setPadding(10, 10, 10, 10); typeface = android.graphics.Typeface.MONOSPACE
-                textIsSelectable = true
+        card.addView(TextView(this).apply {
+            textSize = 15f; setTextColor(Color.WHITE); setPadding(0, 7, 0, 0)
+            markdown.setMarkdown(this, text)
+        })
+        binding.messageList.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 10 })
+        scrollToBottom()
+    }
+
+    private fun showAssistant(answer: String) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(14, 14, 14, 14)
+            setBackgroundColor(Color.rgb(29, 33, 42))
+        }
+        card.addView(TextView(this).apply {
+            text = "AI-BBGI"; textSize = 11f; setTextColor(Color.rgb(185, 166, 255))
+        })
+        val codeRegex = Regex("(?s)```([\\w.+-]*)\\s*\\n(.*?)```")
+        var cursor = 0
+        codeRegex.findAll(answer).forEach { match ->
+            val before = answer.substring(cursor, match.range.first).trim()
+            if (before.isNotEmpty()) addMarkdown(card, before)
+            addCodeBlock(card, match.groupValues[1].ifBlank { "text" }, match.groupValues[2].trimEnd())
+            cursor = match.range.last + 1
+        }
+        val after = answer.substring(cursor).trim()
+        if (after.isNotEmpty()) addMarkdown(card, after)
+        binding.messageList.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 10 })
+        scrollToBottom()
+    }
+
+    private fun addMarkdown(parent: LinearLayout, text: String) {
+        parent.addView(TextView(this).apply {
+            textSize = 15f; setTextColor(Color.WHITE); setPadding(0, 7, 0, 7)
+            markdown.setMarkdown(this, text)
+        })
+    }
+
+    private fun addCodeBlock(parent: LinearLayout, language: String, source: String) {
+        val block = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(10, 10, 10, 10)
+            setBackgroundColor(Color.rgb(17, 20, 27))
+        }
+        block.addView(TextView(this).apply {
+            text = language.uppercase(); textSize = 10f; setTextColor(Color.rgb(156, 203, 189))
+        })
+        block.addView(TextView(this).apply {
+            text = highlightCode(source); textSize = 12.5f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(Color.rgb(232, 235, 242)); setTextIsSelectable(true)
+            setPadding(0, 8, 0, 8)
+        })
+        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.END }
+        buttons.addView(MaterialButton(this).apply {
+            text = "Copy Code"
+            setOnClickListener {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Ai-BBGI code", source))
+                Toast.makeText(this@MainActivity, "Code copied", Toast.LENGTH_SHORT).show()
             }
-            card.addView(codeView)
-            card.addView(Button(this).apply {
-                text = "Copy code"
-                setOnClickListener {
-                    val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    clip.setPrimaryClip(android.content.ClipData.newPlainText("AI code", source))
-                    Toast.makeText(this@MainActivity, "Code copied", Toast.LENGTH_SHORT).show()
-                }
-            })
-            val after = body.substringAfter(match.value).trim()
-            if (after.isNotEmpty()) card.addView(messageText(after))
-        } else card.addView(messageText(body))
-        val lp = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 10 }
-        messages.addView(card, lp)
+        })
+        buttons.addView(MaterialButton(this).apply {
+            text = "Push to GitHub"; setOnClickListener { pushCode(language, source) }
+        })
+        block.addView(buttons)
+        parent.addView(block, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 8; bottomMargin = 8 })
     }
 
-    private fun messageText(value: String) = TextView(this).apply {
-        text = value; textSize = 15f; setTextColor(Color.WHITE); setPadding(0, 6, 0, 6)
+    private fun highlightCode(source: String): CharSequence {
+        val styled = android.text.SpannableString(source)
+        val keywords = Regex("\\b(fun|val|var|class|object|return|if|else|for|while|import|package|const|let|function|def|async|await|public|private|static|new|true|false|null)\\b")
+        keywords.findAll(source).forEach {
+            styled.setSpan(android.text.style.ForegroundColorSpan(Color.rgb(190, 160, 255)),
+                it.range.first, it.range.last + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        Regex("\"[^\"\\n]*\"|'[^'\\n]*'").findAll(source).forEach {
+            styled.setSpan(android.text.style.ForegroundColorSpan(Color.rgb(151, 207, 161)),
+                it.range.first, it.range.last + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        Regex("//[^\\n]*|#[^\\n]*").findAll(source).forEach {
+            styled.setSpan(android.text.style.ForegroundColorSpan(Color.GRAY),
+                it.range.first, it.range.last + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        return styled
     }
 
-    private fun highlight(source: String): SpannableString {
-        val s = SpannableString(source)
-        val patterns = listOf(
-            Regex("\\b(class|fun|val|var|if|else|return|import|package|public|private|const|let|function)\\b") to Color.rgb(190,150,255),
-            Regex("\"[^\"\\n]*\"|'[^'\\n]*'") to Color.rgb(150,210,150),
-            Regex("//[^\\n]*|#[^\\n]*") to Color.GRAY
-        )
-        patterns.forEach { (regex, color) ->
-            regex.findAll(source).forEach { s.setSpan(ForegroundColorSpan(color), it.range.first, it.range.last + 1, 0) }
-        }
-        return s
-    }
-
-    private fun generate(prompt: String) {
-        addMessage("Ai-BBGI", "सोच रहा हूँ…")
-        thread {
-            val answer = try { native.generate(prompt) } catch (e: Exception) { "Error: ${e.message}" }
-            runOnUiThread {
-                if (messages.childCount > 0) messages.removeViewAt(messages.childCount - 1)
-                addMessage("Ai-BBGI", answer)
-            }
-        }
-    }
-
-    private fun settingsDialog() {
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 8, 24, 8) }
-        val token = EditText(this).apply {
-            hint = "GitHub Personal Access Token"; setSingleLine(true)
-            inputType = 129; setText(prefs.getString("github_token", ""))
-        }
-        val repo = EditText(this).apply {
-            hint = "Repository: owner/name"; setSingleLine(true)
-            setText(prefs.getString("github_repo", "Bibgg/Ai-bbgi"))
-        }
-        val path = EditText(this).apply {
-            hint = "New file path (e.g. generated/main.py)"; setSingleLine(true)
-            setText("generated/ai-output.txt")
-        }
-        box.addView(Button(this).apply { text = "Choose .gguf model"; setOnClickListener {
-            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
-            }, pickModel)
-        } })
-        box.addView(token); box.addView(repo); box.addView(path)
-        AlertDialogCompat.show(this, box) {
-            prefs.edit().putString("github_token", token.text.toString().trim())
-                .putString("github_repo", repo.text.toString().trim())
-                .putString("github_path", path.text.toString().trim()).apply()
-            Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    @Deprecated("Deprecated in Android API")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == pickModel && resultCode == Activity.RESULT_OK) {
-            val uri = data?.data ?: return
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            thread {
-                try {
-                    val modelDir = File(filesDir, "models").apply { mkdirs() }
-                    val modelFile = File(modelDir, "selected-model.gguf")
-                    contentResolver.openInputStream(uri).use { input ->
-                        modelFile.outputStream().use { output -> input!!.copyTo(output) }
-                    }
-                    val loaded = native.loadModel(modelFile.absolutePath)
-                    runOnUiThread {
-                        modelReady = loaded
-                        Toast.makeText(this, if (loaded) "GGUF model loaded" else "Model load failed", Toast.LENGTH_LONG).show()
-                    }
-                } catch (e: Exception) {
-                    runOnUiThread { Toast.makeText(this, "Model error: ${e.message}", Toast.LENGTH_LONG).show() }
-                }
-            }
-        }
-    }
-
-    private fun pushLatestCode() {
-        val source = latestCode
-        if (source.isNullOrBlank()) {
-            Toast.makeText(this, "पहले AI से code generate करें।", Toast.LENGTH_SHORT).show()
+    private fun pushCode(language: String, source: String) {
+        val prefs = SecurePrefs.get(this)
+        val backend = prefs.getString(SettingsActivity.KEY_BACKEND_URL, "").orEmpty()
+        val key = prefs.getString(SettingsActivity.KEY_API_KEY, "").orEmpty()
+        val token = prefs.getString(SettingsActivity.KEY_GITHUB_TOKEN, "").orEmpty()
+        val repo = prefs.getString(SettingsActivity.KEY_GITHUB_REPO, "Bibgg/Ai-bbgi").orEmpty()
+        if (backend.isBlank() || key.isBlank() || token.isBlank()) {
+            Toast.makeText(this, "Settings में Backend, API Key और GitHub Token भरें।", Toast.LENGTH_LONG).show()
             return
         }
-        val token = prefs.getString("github_token", "").orEmpty()
-        val repo = prefs.getString("github_repo", "").orEmpty()
-        val path = prefs.getString("github_path", "generated/ai-output.txt").orEmpty()
-        if (token.isBlank() || !repo.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")) || path.isBlank()) {
-            Toast.makeText(this, "Settings में Token, Repository और file path भरें।", Toast.LENGTH_LONG).show()
-            return
-        }
-        thread {
+        Thread {
             try {
-                val api = URL("https://api.github.com/repos/$repo/contents/$path")
-                val conn = (api.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "PUT"; doOutput = true; connectTimeout = 15000; readTimeout = 20000
-                    setRequestProperty("Authorization", "Bearer $token")
-                    setRequestProperty("Accept", "application/vnd.github+json")
-                    setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
-                    setRequestProperty("Content-Type", "application/json")
-                }
-                val payload = JSONObject().put("message", "Add AI generated code")
-                    .put("content", Base64.getEncoder().encodeToString(source.toByteArray(Charsets.UTF_8)))
-                conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
-                val status = conn.responseCode
-                val response = (if (status in 200..299) conn.inputStream else conn.errorStream)
-                    ?.bufferedReader()?.use { it.readText() }.orEmpty()
-                if (status !in 200..299) throw IllegalStateException("GitHub HTTP $status: $response")
-                runOnUiThread { Toast.makeText(this, "GitHub commit successful", Toast.LENGTH_LONG).show() }
-                conn.disconnect()
-            } catch (e: Exception) {
-                runOnUiThread { Toast.makeText(this, "Push failed: ${e.message}", Toast.LENGTH_LONG).show() }
+                val path = "generated/ai-output-${System.currentTimeMillis()}.${extension(language)}"
+                val payload = JSONObject().put("repo", repo).put("filePath", path)
+                    .put("content", source).put("commitMessage", "Add AI-generated ${language} code")
+                    .put("githubToken", token)
+                request("$backend/api/github/push", key, payload)
+                runOnUiThread { Toast.makeText(this, "Committed: $path", Toast.LENGTH_LONG).show() }
+            } catch (error: Exception) {
+                runOnUiThread { Toast.makeText(this, "GitHub push failed: ${error.message}", Toast.LENGTH_LONG).show() }
             }
-        }
+        }.start()
     }
 
-    override fun onDestroy() {
-        if (::prefs.isInitialized) native.unload()
-        super.onDestroy()
+    private fun extension(language: String): String = when (language.lowercase()) {
+        "kotlin", "kt" -> "kt"; "java" -> "java"; "python", "py" -> "py"
+        "javascript", "js" -> "js"; "typescript", "ts" -> "ts"; "json" -> "json"
+        "xml" -> "xml"; "html" -> "html"; "css" -> "css"; "bash", "sh", "shell" -> "sh"
+        "yaml", "yml" -> "yml"; "markdown", "md" -> "md"; else -> "txt"
     }
-}
 
-private object AlertDialogCompat {
-    fun show(activity: Activity, content: LinearLayout, save: () -> Unit) {
-        android.app.AlertDialog.Builder(activity)
-            .setTitle("Ai-BBGI Settings").setView(content)
-            .setPositiveButton("Save") { _, _ -> save() }
-            .setNegativeButton("Cancel", null).show()
-    }
+    private fun scrollToBottom() { binding.chatScroll.post { binding.chatScroll.fullScroll(View.FOCUS_DOWN) } }
+    private data class AiReply(val text: String, val provider: String)
 }
