@@ -382,8 +382,17 @@ async function connectMongo() {
     console.log('[startup] MongoDB connected.');
   } catch (error) {
     console.error('[startup] MongoDB connection failed:', error.message);
+    const retry = setTimeout(() => connectMongo(), 15000);
+    retry.unref();
   }
 }
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('[mongo] Connection lost.');
+});
+mongoose.connection.on('error', (error) => {
+  console.error('[mongo] Connection error:', error.message);
+});
 
 async function start() {
   await connectMongo();
