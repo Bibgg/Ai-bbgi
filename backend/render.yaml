@@ -22,12 +22,12 @@ services:
       - key: APP_API_KEY
         sync: false
       - key: GITHUB_TOKEN
-        sync: false
+        value: ""
       - key: LLAMA_SERVER_URL
-        sync: false
+        value: ""
       - key: CLOUD_API_URL
         value: https://api.openai.com/v1/chat/completions
       - key: CLOUD_API_KEY
-        sync: false
+        value: ""
       - key: CLOUD_MODEL
         value: gpt-4o-mini
