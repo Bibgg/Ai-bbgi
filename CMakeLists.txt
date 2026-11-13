@@ -320,3 +320,10 @@ configure_file(cmake/llama.pc.in
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/llama.pc"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+
+
+# Ai-BBGI Android JNI bridge. The app module uses this root CMake project so
+# llama.cpp and the JNI shared library are built for the same Android ABI.
+if (ANDROID)
+    add_subdirectory(app/src/main/cpp)
+endif()
