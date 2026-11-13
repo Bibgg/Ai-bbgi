@@ -35,6 +35,7 @@ android {
     buildTypes {
         debug { applicationIdSuffix '.debug' }
         release {
+            signingConfig signingConfigs.debug // test-only signing; use a private release key for Play Store
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
