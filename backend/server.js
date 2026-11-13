@@ -9,6 +9,7 @@ const helmet = require('helmet');
 const mongoose = require('mongoose');
 const { rateLimit } = require('express-rate-limit');
 const { Octokit } = require('@octokit/rest');
+const { searchWeb } = require('./research');
 
 const app = express();
 app.disable('x-powered-by');
@@ -252,7 +253,17 @@ api.post('/chat', asyncRoute(async (req, res) => {
   const history = await loadHistory(session.id, req.ownerId);
   const memory = await UserMemory.findOne({ ownerId: req.ownerId }).lean();
   const messages = [];
+  let sources = [];
   if (memory?.content) messages.push({ role: 'system', content: `Long-term user context:\n${memory.content}` });
+  if (req.body?.mode === 'research') {
+    try {
+      sources = await searchWeb(prompt, 5);
+      const sourceNotes = sources.map((source, index) => `[${index + 1}] ${source.title}\nURL: ${source.url}\nSnippet: ${source.snippet}\nPage extract: ${source.excerpt}`).join('\n\n');
+      messages.push({ role: 'system', content: 'You are in live web research mode. Answer using the supplied current web sources. Separate sourced facts from uncertainty, never invent facts, cite sources as [1], [2], and explain conflicts.\n\nWEB SOURCES:\n' + sourceNotes });
+    } catch (error) {
+      return res.status(502).json({ error: 'Live web search failed: ' + error.message, sessionId: session.id });
+    }
+  }
   messages.push(...history, { role: 'user', content: prompt });
 
   await ChatMessage.create({ sessionId: session.id, ownerId: req.ownerId, role: 'user', content: prompt, provider: 'system' });
@@ -277,7 +288,7 @@ api.post('/chat', asyncRoute(async (req, res) => {
       language: block[1] || 'text', content: block[2].trim()
     });
   }
-  res.json({ sessionId: session.id, reply: result.answer, provider: result.provider });
+  res.json({ sessionId: session.id, reply: result.answer, provider: result.provider, sources });
 }));
 
 api.get('/memory', asyncRoute(async (req, res) => {
