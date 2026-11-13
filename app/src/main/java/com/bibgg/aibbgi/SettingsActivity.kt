@@ -94,7 +94,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     companion object {
-        const val DEFAULT_BACKEND_URL = "https://ai-bbgi-backend-d57y.onrender.com"
+        const val DEFAULT_BACKEND_URL = "https://ai-bbgi-privateai-api.onrender.com"
         const val KEY_BACKEND_URL = "backend_url"
         const val KEY_API_KEY = "api_key"
         const val KEY_LOCAL_MODE = "local_mode"
