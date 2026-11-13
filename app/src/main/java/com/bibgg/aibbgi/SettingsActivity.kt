@@ -55,5 +55,6 @@ class SettingsActivity : AppCompatActivity() {
         const val KEY_GITHUB_REPO = "github_repo"
         const val KEY_GITHUB_TOKEN = "github_token"
         const val KEY_CLIENT_ID = "client_id"
+        const val KEY_SESSION_ID = "session_id"
     }
 }
