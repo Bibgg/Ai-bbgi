@@ -6,6 +6,22 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
+import android.net.Uri
+import android.os.StatFs
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
+import com.arm.aichat.AiChat
+import com.arm.aichat.InferenceEngine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
 import android.view.Gravity
 import android.view.MenuItem
 import android.view.View
@@ -34,6 +50,27 @@ class MainActivity : AppCompatActivity() {
     private var sessionId: String? = null
     private val localHistory = mutableListOf<Pair<String, String>>()
     private var busy = false
+    @Volatile private var localModelReady = false
+    @Volatile private var localEngine: InferenceEngine? = null
+    private var modelSetupBusy = false
+
+    private val downloadHttp = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
+
+    companion object {
+        private const val MODEL_URL =
+            "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+        private const val MODEL_FILE = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+        private const val MODEL_SHA256 =
+            "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
+        private const val ON_DEVICE_SYSTEM_PROMPT =
+            "You are AI-BBGI, a helpful private assistant. Reply clearly and accurately. " +
+            "The user prefers Hindi; answer in the language used by the user. " +
+            "Do not invent facts. Say when you are unsure."
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,6 +82,7 @@ class MainActivity : AppCompatActivity() {
         sessionId = SecurePrefs.get(this).getString(SettingsActivity.KEY_SESSION_ID, null)
         showText("assistant", "नमस्ते! Settings में Render Backend URL और API Key सेट करें। Local Mode के लिए llama.cpp server URL भी दें।")
         restoreSessionHistory()
+        restoreOnDeviceModel()
     }
 
     override fun onCreateOptionsMenu(menu: android.view.Menu): Boolean {
@@ -53,6 +91,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (item.itemId == R.id.action_download_model) {
+            downloadAndLoadModel()
+            return true
+        }
         if (item.itemId == R.id.action_settings) {
             startActivity(Intent(this, SettingsActivity::class.java))
             return true
@@ -64,7 +106,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateStatus() {
         val local = SecurePrefs.get(this).getBoolean(SettingsActivity.KEY_LOCAL_MODE, false)
-        binding.providerStatus.text = if (local) "Local preferred · Cloud fallback enabled" else "Cloud mode · Render backend"
+        binding.providerStatus.text = when {
+            localModelReady -> "On-device AI ready · Qwen2.5 0.5B"
+            local -> "Local llama.cpp server preferred · Cloud fallback"
+            else -> "Cloud mode · Render backend"
+        }
     }
 
     private fun sendMessage() {
@@ -76,7 +122,7 @@ class MainActivity : AppCompatActivity() {
         val key = prefs.getString(SettingsActivity.KEY_API_KEY, "").orEmpty()
         val localModeSelected = prefs.getBoolean(SettingsActivity.KEY_LOCAL_MODE, false)
         val localServerSelected = prefs.getString(SettingsActivity.KEY_LLAMA_URL, "").orEmpty().isNotBlank()
-        if ((!localModeSelected || !localServerSelected) && (backend.isBlank() || key.isBlank())) {
+        if (!localModelReady && (!localModeSelected || !localServerSelected) && (backend.isBlank() || key.isBlank())) {
             Toast.makeText(this, "Cloud chat के लिए Settings में Backend URL और API Key सेट करें।", Toast.LENGTH_LONG).show()
             return
         }
@@ -89,7 +135,11 @@ class MainActivity : AppCompatActivity() {
             try {
                 val localMode = prefs.getBoolean(SettingsActivity.KEY_LOCAL_MODE, false)
                 val localUrl = prefs.getString(SettingsActivity.KEY_LLAMA_URL, "").orEmpty()
-                val result = if (localMode && localUrl.isNotBlank()) {
+                val result = if (localModelReady) {
+                    val answer = callOnDevice(prompt)
+                    persistLocalIfPossible(backend, key, prompt, answer)
+                    AiReply(answer, "on-device Qwen2.5 0.5B")
+                } else if (localMode && localUrl.isNotBlank()) {
                     try {
                         val memory = if (backend.isNotBlank() && key.isNotBlank()) {
                             try { getJson("$backend/api/memory", key).optString("memory") } catch (_: Exception) { "" }
@@ -115,6 +165,187 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { busy = false; binding.sendButton.isEnabled = true }
             }
         }.start()
+    }
+
+
+    private fun restoreOnDeviceModel() {
+        val path = SecurePrefs.get(this)
+            .getString(SettingsActivity.KEY_ON_DEVICE_MODEL_PATH, null) ?: return
+        val file = File(path)
+        if (!file.isFile || file.length() < 100L * 1024L * 1024L) {
+            SecurePrefs.get(this).edit()
+                .remove(SettingsActivity.KEY_ON_DEVICE_MODEL_PATH).apply()
+            return
+        }
+        lifecycleScope.launch {
+            try {
+                loadOnDeviceModel(file)
+                Toast.makeText(this@MainActivity, "Local AI model loaded", Toast.LENGTH_SHORT).show()
+            } catch (error: Exception) {
+                localModelReady = false
+                binding.providerStatus.text = "Local model could not load: ${error.message}"
+            }
+        }
+    }
+
+    private fun downloadAndLoadModel() {
+        if (modelSetupBusy || localModelReady) return
+        modelSetupBusy = true
+        binding.providerStatus.text = "Preparing local AI model…"
+        invalidateOptionsMenu()
+        lifecycleScope.launch {
+            try {
+                val modelFile = withContext(Dispatchers.IO) { downloadModel() }
+                loadOnDeviceModel(modelFile)
+                Toast.makeText(
+                    this@MainActivity,
+                    "AI-BBGI local model is ready",
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (error: Exception) {
+                binding.providerStatus.text = "Model setup failed: ${error.message ?: "unknown error"}"
+                Toast.makeText(
+                    this@MainActivity,
+                    "Model setup failed: ${error.message ?: "unknown error"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            } finally {
+                modelSetupBusy = false
+                updateStatus()
+                invalidateOptionsMenu()
+            }
+        }
+    }
+
+    private suspend fun downloadModel(): File = withContext(Dispatchers.IO) {
+        val directory = File(filesDir, "models")
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw IllegalStateException("Cannot create private model storage")
+        }
+        val destination = File(directory, MODEL_FILE)
+        if (destination.isFile && sha256(destination) == MODEL_SHA256) {
+            return@withContext destination
+        }
+
+        val available = StatFs(filesDir.absolutePath).availableBytes
+        val minimumFree = 650L * 1024L * 1024L
+        if (available < minimumFree) {
+            throw IllegalStateException("कम-से-कम 650 MB खाली स्टोरेज चाहिए")
+        }
+
+        val temporary = File(directory, "$MODEL_FILE.part")
+        temporary.delete()
+        val request = Request.Builder().url(MODEL_URL)
+            .header("User-Agent", "AI-BBGI-Android")
+            .get().build()
+        downloadHttp.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IllegalStateException("Hugging Face download HTTP ${response.code}")
+            }
+            val body = response.body ?: throw IllegalStateException("Empty model download")
+            val contentLength = body.contentLength()
+            if (contentLength > 0 && available < contentLength + 150L * 1024L * 1024L) {
+                throw IllegalStateException("मॉडल के लिए पर्याप्त खाली स्टोरेज नहीं है")
+            }
+
+            val digest = MessageDigest.getInstance("SHA-256")
+            var copied = 0L
+            var lastUiUpdate = 0L
+            val buffer = ByteArray(64 * 1024)
+            body.byteStream().use { input ->
+                FileOutputStream(temporary).use { output ->
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        output.write(buffer, 0, count)
+                        digest.update(buffer, 0, count)
+                        copied += count
+                        val now = System.currentTimeMillis()
+                        if (now - lastUiUpdate >= 700L) {
+                            lastUiUpdate = now
+                            val downloadedMb = copied / (1024L * 1024L)
+                            val totalMb = if (contentLength > 0) contentLength / (1024L * 1024L) else 0L
+                            runOnUiThread {
+                                binding.providerStatus.text =
+                                    if (totalMb > 0) "Downloading local AI · $downloadedMb / $totalMb MB"
+                                    else "Downloading local AI · $downloadedMb MB"
+                            }
+                        }
+                    }
+                    output.fd.sync()
+                }
+            }
+
+            val actualHash = digest.digest().joinToString("") { "%02x".format(it) }
+            if (actualHash != MODEL_SHA256) {
+                temporary.delete()
+                throw IllegalStateException("Model SHA-256 verification failed")
+            }
+            if (destination.exists() && !destination.delete()) {
+                temporary.delete()
+                throw IllegalStateException("Cannot replace old model file")
+            }
+            if (!temporary.renameTo(destination)) {
+                temporary.delete()
+                throw IllegalStateException("Cannot save downloaded model")
+            }
+        }
+        destination
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private suspend fun obtainLocalEngine(): InferenceEngine = withContext(Dispatchers.IO) {
+        localEngine ?: run {
+            val candidate = AiChat.getInferenceEngine(applicationContext)
+            val state = withTimeout(120_000L) {
+                candidate.state.first {
+                    it is InferenceEngine.State.Initialized || it is InferenceEngine.State.Error
+                }
+            }
+            if (state is InferenceEngine.State.Error) {
+                throw state.exception
+            }
+            candidate.also { localEngine = it }
+        }
+    }
+
+    private suspend fun loadOnDeviceModel(file: File) {
+        val engine = obtainLocalEngine()
+        withContext(Dispatchers.IO) {
+            engine.loadModel(file.absolutePath)
+            engine.setSystemPrompt(ON_DEVICE_SYSTEM_PROMPT)
+        }
+        SecurePrefs.get(this).edit()
+            .putString(SettingsActivity.KEY_ON_DEVICE_MODEL_PATH, file.absolutePath)
+            .apply()
+        localModelReady = true
+        updateStatus()
+        invalidateOptionsMenu()
+    }
+
+    private fun callOnDevice(prompt: String): String {
+        val engine = localEngine ?: throw IllegalStateException("Local AI engine is not initialized")
+        val response = StringBuilder()
+        runBlocking(Dispatchers.IO) {
+            engine.sendUserPrompt(prompt, 256).collect { token ->
+                response.append(token)
+            }
+        }
+        return response.toString().trim().ifBlank {
+            throw IllegalStateException("Local model returned an empty response")
+        }
     }
 
     private fun clientId(): String {
